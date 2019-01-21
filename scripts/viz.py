@@ -35,13 +35,19 @@ def main(env_id, policy_file, record, stochastic, extra_kwargs):
             pi = ESAtariPolicy.Load(policy_file, extra_kwargs=extra_kwargs)
             pi.set_ref_batch(get_ref_batch(env, batch_size=128))
         else:
+            print("Shawn: I am currently using Mujoco.")
+            print("Shawn: This is extra_kwargs:{}".format(extra_kwargs))
             pi = MujocoPolicy.Load(policy_file, extra_kwargs=extra_kwargs)
             
         while True:
             if is_atari_policy:
+                print("Shawn : I am play atari")
                 rews, t, novelty_vector = pi.rollout(env, render=True, random_stream=np.random if stochastic else None)
-            print('return={:.4f} len={}'.format(rews.sum(), t))
+            else:
+                print("Shawn : I am play mujoco")
+                rews, t, novelty_vector = pi.rollout(env, render=True, random_stream=np.random if stochastic else None)
 
+            print('return={:.4f} len={}'.format(rews.sum(), t))
             if record:
                 env.close()
                 return

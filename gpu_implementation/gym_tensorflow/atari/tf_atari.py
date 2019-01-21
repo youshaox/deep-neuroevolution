@@ -1,7 +1,6 @@
 import os
 import tensorflow as tf
 import numpy as np
-
 from gym_tensorflow.tf_env import TensorFlowEnv, gym_tensorflow_module
 
 games = ['air_raid', 'alien', 'amidar', 'assault', 'asterix', 'asteroids', 'atlantis',

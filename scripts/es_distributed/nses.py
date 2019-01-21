@@ -3,7 +3,7 @@ import time
 from collections import namedtuple
 import tensorflow as tf
 from copy import deepcopy
-
+import debugger
 import numpy as np
 
 from .dist import MasterClient, WorkerClient
@@ -20,6 +20,13 @@ def euclidean_distance(x, y):
     return np.sqrt(a**2 + b**2)
 
 def compute_novelty_vs_archive(archive, novelty_vector, k):
+    """
+    对于已知的
+    :param archive:
+    :param novelty_vector:
+    :param k:
+    :return:
+    """
     distances = []
     nov = novelty_vector.astype(np.float)
     for point in archive:
@@ -278,6 +285,7 @@ def run_master(master_redis_cfg, log_dir, exp):
             for p in range(pop_size):
                 policy.set_trainable_flat(theta_dict[p])
                 mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
+                # mean_bc 就是 novelty
                 nov_p = compute_novelty_vs_archive(archive, mean_bc, exp['novelty_search']['k'])
                 novelty_probs.append(nov_p)
             novelty_probs = np.array(novelty_probs) / float(np.sum(novelty_probs))
