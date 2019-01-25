@@ -367,6 +367,7 @@ def rollout_and_update_ob_stat(policy, env, timestep_limit, rs, task_ob_stat, ca
 def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2):
     logger.info('run_worker: {}'.format(locals()))
     assert isinstance(noise, SharedNoiseTable)
+    # worker client在这里才初始化
     worker = WorkerClient(relay_redis_cfg, master_redis_cfg)
     exp = worker.get_experiment()
     config, env, sess, policy = setup(exp, single_threaded=True)

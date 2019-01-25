@@ -84,6 +84,7 @@ class Policy:
             obs = []
         ob = env.reset()
         for _ in range(timestep_limit):
+            # 采取的行动actions
             ac = self.act(ob[None], random_stream=random_stream)[0]
             if save_obs:
                 obs.append(ob)
@@ -397,7 +398,7 @@ class ESAtariPolicy(Policy):
             np.random.seed(policy_seed)
             if random_stream:
                 random_stream.seed(policy_seed)
-
+        # end of an episode 环境reset
         ob = env.reset()
         self.act(self.ref_list, random_stream=random_stream) #passing ref batch through network
 
@@ -446,7 +447,8 @@ class GAAtariPolicy(Policy):
             o = tf.placeholder(tf.float32, [None] + list(self.ob_space_shape))
 
             a = self._make_net(o)
-            self._act = U.function([o] , a)
+            # 通过神经网络来给初action，输入神经网络结构和observation。神经网络的结构会随着Evolutionary Strategies 来变化的
+            self._act = U.function([o], a)
         return scope
 
     def _make_net(self, o):

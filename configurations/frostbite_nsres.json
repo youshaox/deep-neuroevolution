@@ -1,11 +1,13 @@
 {
   "config": {
     "calc_obstat_prob": 0.0,
+//    这个参数干什么的？
     "episodes_per_batch": 1000,
     "eval_prob": 0.1,
     "l2coeff": 0.005,
     "noise_stdev": 0.02,
     "snapshot_freq": 10,
+//    这个参数干什么的？
     "timesteps_per_batch": 10000,
     "return_proc_mode": "centered_sign_rank",
     "episode_cutoff_mode": 5000
