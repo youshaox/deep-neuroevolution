@@ -221,7 +221,6 @@ def flatgrad(loss, var_list):
     return tf.concat(0, [tf.reshape(grad, [numel(v)])
         for (v, grad) in zip(var_list, grads)])
 
-# 通过theta来设置neural network参数，Flat就是theta
 class SetFromFlat(object):
     def __init__(self, var_list, dtype=tf.float32):
         assigns = []

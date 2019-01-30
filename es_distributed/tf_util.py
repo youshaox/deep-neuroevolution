@@ -62,7 +62,6 @@ def lrelu(x, leak=0.2):
     return f1 * x + f2 * abs(x)
 def categorical_sample_logits(X):
     # https://github.com/tensorflow/tensorflow/issues/456
-    # todo 今天 U.function Tensorflow搞定
     U = tf.random_uniform(tf.shape(X))
     return argmax(X - tf.log(-tf.log(U)), axis=1)
 
@@ -221,7 +220,6 @@ def flatgrad(loss, var_list):
     grads = tf.gradients(loss, var_list)
     return tf.concat(0, [tf.reshape(grad, [numel(v)])
         for (v, grad) in zip(var_list, grads)])
-
 
 class SetFromFlat(object):
     def __init__(self, var_list, dtype=tf.float32):

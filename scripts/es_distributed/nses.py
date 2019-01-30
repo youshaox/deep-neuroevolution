@@ -3,7 +3,7 @@ import time
 from collections import namedtuple
 import tensorflow as tf
 from copy import deepcopy
-import debugger
+
 import numpy as np
 
 from .dist import MasterClient, WorkerClient
@@ -20,13 +20,6 @@ def euclidean_distance(x, y):
     return np.sqrt(a**2 + b**2)
 
 def compute_novelty_vs_archive(archive, novelty_vector, k):
-    """
-    对于已知的archive，计算novelty。
-    :param archive:
-    :param novelty_vector:
-    :param k:
-    :return:
-    """
     distances = []
     nov = novelty_vector.astype(np.float)
     for point in archive:
@@ -34,7 +27,6 @@ def compute_novelty_vs_archive(archive, novelty_vector, k):
 
     # Pick k nearest neighbors
     distances = np.array(distances)
-    # 选距离最小的k的个
     top_k_indicies = (distances).argsort()[:k]
     top_k = distances[top_k_indicies]
     return top_k.mean()
@@ -69,7 +61,6 @@ def run_master(master_redis_cfg, log_dir, exp):
     from . import tabular_logger as tlogger
     config, env = setup_env(exp)
     algo_type = exp['algo_type']
-    # MasterClient, WorkerClient都是到这里才初始化
     master = MasterClient(master_redis_cfg)
     noise = SharedNoiseTable()
     rs = np.random.RandomState()
@@ -128,16 +119,12 @@ def run_master(master_redis_cfg, log_dir, exp):
     episodes_so_far = 0
     timesteps_so_far = 0
     tstart = time.time()
-
-    # redis中声明实验
     master.declare_experiment(exp)
 
     while True:
-
         step_tstart = time.time()
 
         theta = theta_dict[curr_parent]
-        logger.debug("This is the current theta: {}".format(str(theta)))
         policy.set_trainable_flat(theta)
         optimizer = optimizer_dict[curr_parent]
 
@@ -148,7 +135,6 @@ def run_master(master_redis_cfg, log_dir, exp):
 
         curr_task_id = master.declare_task(Task(
             params=theta,
-            # tod 是是observation的mean 解决
             ob_mean=ob_stat.mean if policy.needs_ob_stat else None,
             ob_std=ob_stat.std if policy.needs_ob_stat else None,
             ref_batch=ref_batch if policy.needs_ref_batch else None,
@@ -156,7 +142,6 @@ def run_master(master_redis_cfg, log_dir, exp):
         ))
         tlogger.log('********** Iteration {} **********'.format(curr_task_id))
 
-        # ！！！！ 直到有数据库中有result，才pop结果
         # Pop off results for the current task
         curr_task_results, eval_rets, eval_lens, worker_ids = [], [], [], []
         num_results_skipped, num_episodes_popped, num_timesteps_popped, ob_count_this_batch = 0, 0, 0, 0
@@ -191,9 +176,7 @@ def run_master(master_redis_cfg, log_dir, exp):
                     num_timesteps_popped += result_num_timesteps
                     # Update ob stats
                     if policy.needs_ob_stat and result.ob_count > 0:
-                        # 将result的observation state add 在一起
                         ob_stat.increment(result.ob_sum, result.ob_sumsq, result.ob_count)
-                        # 统计这个batch探索了多少的observation
                         ob_count_this_batch += result.ob_count
                 else:
                     num_results_skipped += 1
@@ -283,7 +266,6 @@ def run_master(master_redis_cfg, log_dir, exp):
         tlogger.dump_tabular()
 
         #updating population parameters
-        #
         theta_dict[curr_parent] = policy.get_trainable_flat()
         optimizer_dict[curr_parent] = optimizer
         if policy.needs_ob_stat:
@@ -295,11 +277,9 @@ def run_master(master_redis_cfg, log_dir, exp):
             for p in range(pop_size):
                 policy.set_trainable_flat(theta_dict[p])
                 mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
-                # mean_bc 就是 novelty
                 nov_p = compute_novelty_vs_archive(archive, mean_bc, exp['novelty_search']['k'])
                 novelty_probs.append(nov_p)
             novelty_probs = np.array(novelty_probs) / float(np.sum(novelty_probs))
-            # 这一步就是按照equation 1 来sample。
             curr_parent = np.random.choice(range(pop_size), 1, p=novelty_probs)[0]
         elif exp['novelty_search']['selection_method'] == "round_robin":
             curr_parent = (curr_parent + 1) % pop_size
@@ -345,17 +325,12 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
             archive = worker.get_archive()
             previous_task_id = task_id
 
-        ## todo 想想看为什么要分这两个?，这个是不做mutation，10%的可能性
-        # 这个是eval with noiseless 的概率，非常小10%
         if rs.rand() < config.eval_prob:
             # Evaluation: noiseless weights and noiseless actions
             policy.set_trainable_flat(task_data.params)
-            # 训练的结果
             eval_rews, eval_length, _ = policy.rollout(env, timestep_limit=task_data.timestep_limit)
             eval_return = eval_rews.sum()
-            # 一个worker提交结果 Eval result
             logger.info('Eval result: task={} return={:.3f} length={}'.format(task_id, eval_return, eval_length))
-            # 看起来应该这里的push_result没有成功!
             worker.push_result(task_id, Result(
                 worker_id=worker_id,
                 noise_inds_n=None,
@@ -392,10 +367,7 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
                 noise_inds.append(noise_idx)
                 returns.append([rews_pos.sum(), rews_neg.sum()])
                 lengths.append([len_pos, len_neg])
-            # todo 需要做变异
-            logger.debug("worker_id: {} and I have done mutation or add the noise and my result is following:".format(worker_id))
-            logger.debug(np.array(returns, dtype=np.float32),)
-            logger.debug("\n")
+
             worker.push_result(task_id, Result(
                 worker_id=worker_id,
                 noise_inds_n=np.array(noise_inds),

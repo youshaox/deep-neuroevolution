@@ -58,13 +58,10 @@ class Policy:
 
     @classmethod
     def Load(cls, filename, extra_kwargs=None):
-        print("Shawn: I am start to load")
         with h5py.File(filename, 'r') as f:
             args, kwargs = pickle.loads(f.attrs['args_and_kwargs'].tostring())
             if extra_kwargs:
                 kwargs.update(extra_kwargs)
-            print("Shawn: This is *agrs: {}".format(*args))
-            print("Shawn: This is **kwargs: {}".format(**kwargs))
             policy = cls(*args, **kwargs)
             policy.set_all_vars(*[f[v.name][...] for v in policy.all_variables])
         return policy
@@ -84,7 +81,6 @@ class Policy:
             obs = []
         ob = env.reset()
         for _ in range(timestep_limit):
-            # 采取的行动actions
             ac = self.act(ob[None], random_stream=random_stream)[0]
             if save_obs:
                 obs.append(ob)
@@ -398,7 +394,7 @@ class ESAtariPolicy(Policy):
             np.random.seed(policy_seed)
             if random_stream:
                 random_stream.seed(policy_seed)
-        # end of an episode 环境reset
+
         ob = env.reset()
         self.act(self.ref_list, random_stream=random_stream) #passing ref batch through network
 
@@ -447,8 +443,7 @@ class GAAtariPolicy(Policy):
             o = tf.placeholder(tf.float32, [None] + list(self.ob_space_shape))
 
             a = self._make_net(o)
-            # 通过神经网络来给初action，输入神经网络结构和observation。神经网络的结构会随着Evolutionary Strategies 来变化的
-            self._act = U.function([o], a)
+            self._act = U.function([o] , a)
         return scope
 
     def _make_net(self, o):
@@ -512,6 +507,7 @@ class GAAtariPolicy(Policy):
 
         # Copy over final positions to the max timesteps
         rews = np.array(rews, dtype=np.float32)
+        # 得到最终的ram state information
         novelty_vector = env.unwrapped._get_ram() # extracts RAM state information
         if save_obs:
             return rews, t, np.array(obs), np.array(novelty_vector)

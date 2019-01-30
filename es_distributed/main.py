@@ -23,7 +23,7 @@ def mkdir_p(path):
 def cli():
     logging.basicConfig(
         format='[%(asctime)s pid=%(process)d] %(message)s',
-        level=logging.INFO,
+        level=logging.DEBUG,
         stream=sys.stderr)
 
 def import_algo(name):

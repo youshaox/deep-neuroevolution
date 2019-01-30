@@ -58,34 +58,12 @@ class Policy:
 
     @classmethod
     def Load(cls, filename, extra_kwargs=None):
-        print("Shawn: I am start to load")
         with h5py.File(filename, 'r') as f:
             args, kwargs = pickle.loads(f.attrs['args_and_kwargs'].tostring())
-            print(args)
-            print(kwargs)
-
             if extra_kwargs:
                 kwargs.update(extra_kwargs)
-
-            # for arg in args:
-            #     print("Shawn: This is *agrs: {}".format(args))
-            #     print(type(args[0]))
-            #     print(args[0].low)
-            #     print(args[0].high)
-            #
-            #     print("--------")
-            #     print(type(args[1]))
-            #     print(args[1].__dict__)
-            #
-            # for key in kwargs:
-            #     print("Shawn: This is **kwargs: {}".format(kwargs[key]))
-            print("startstartstartstartstartstartstart")
             policy = cls(*args, **kwargs)
-            for v in policy.all_variables:
-                print(v)
-            print("endendendendendendendendendendendend")
             policy.set_all_vars(*[f[v.name][...] for v in policy.all_variables])
-            print(policy.__dict__)
         return policy
 
     # === Rollouts/training ===

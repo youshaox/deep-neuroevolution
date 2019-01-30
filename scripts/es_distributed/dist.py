@@ -12,10 +12,7 @@ logger = logging.getLogger(__name__)
 EXP_KEY = 'es:exp'
 TASK_ID_KEY = 'es:task_id'
 TASK_DATA_KEY = 'es:task_data'
-# (empty list or set)
-# todo urgent 搞懂这个task_channel干啥的
 TASK_CHANNEL = 'es:task_channel'
-# (empty list or set)
 RESULTS_KEY = 'es:results'
 ARCHIVE_KEY = 'es:archive'
 
@@ -77,7 +74,6 @@ class MasterClient:
         self.task_counter += 1
 
         serialized_task_data = serialize(task_data)
-        # pipline:一次性发送多条命令并在执行完后一次性将结果返回，pipeline通过减少客户端与redis的通信次数来实现降低往返延时时间
         (self.master_redis.pipeline()
          .mset({TASK_ID_KEY: task_id, TASK_DATA_KEY: serialized_task_data})
          .publish(TASK_CHANNEL, serialize((task_id, serialized_task_data)))
@@ -86,8 +82,6 @@ class MasterClient:
         return task_id
 
     def pop_result(self):
-        # todo 看下结果，目前没有结果
-        # 如果没有结果 无限block住.
         task_id, result = deserialize(self.master_redis.blpop(RESULTS_KEY)[1])
         logger.debug('[master] Popped a result for task {}'.format(task_id))
         return task_id, result
@@ -130,18 +124,13 @@ class RelayClient:
         # Loop on RESULTS_KEY and push to master
         batch_sizes, last_print_time = deque(maxlen=20), time.time()  # for logging
         while True:
-            # todo 错误 目前一直在循环
             results = []
             start_time = curr_time = time.time()
             while curr_time - start_time < 0.001:
-                # todo
                 results.append(self.local_redis.blpop(RESULTS_KEY)[1])
                 curr_time = time.time()
             self.results_published += len(results)
             self.master_redis.rpush(RESULTS_KEY, *results)
-            # todo
-            results = [result.decode('utf-8') for result in results]
-            logger.info("pid: {} Currently the RelayClient run() has pushed the following results:\n".format(str(os.getpid())) + str(results))
             # Log
             batch_sizes.append(len(results))
             if curr_time - last_print_time > 5.0:
@@ -197,13 +186,7 @@ class WorkerClient:
                 except redis.WatchError:
                     continue
         return self.cached_task_id, self.cached_task_data
-    # todo 看起来没有push_result，或者说push_result后面没有进行下去 判断下 应该是push_result没有进去。
+
     def push_result(self, task_id, result):
-        # todo
-        logger.debug('[worker] pid:{} Pushed result for task {} starts'.format(str(os.getpid()), task_id))
-
         self.local_redis.rpush(RESULTS_KEY, serialize((task_id, result)))
-        # todo
-        logger.debug(result)
-        logger.debug('[worker] pid:{} Pushed result for task {} sucesses. The result is above'.format(str(os.getpid()), task_id))
-
+        logger.debug('[worker] Pushed result for task {}'.format(task_id))

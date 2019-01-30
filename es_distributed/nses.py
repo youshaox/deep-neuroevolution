@@ -9,6 +9,7 @@ import numpy as np
 from .dist import MasterClient, WorkerClient
 from .es import *
 
+
 def euclidean_distance(x, y):
     n, m = len(x), len(y)
     if n > m:
@@ -17,7 +18,8 @@ def euclidean_distance(x, y):
     else:
         a = np.linalg.norm(x - y[:n])
         b = np.linalg.norm(x[-1] - y[n:])
-    return np.sqrt(a**2 + b**2)
+    return np.sqrt(a ** 2 + b ** 2)
+
 
 def compute_novelty_vs_archive(archive, novelty_vector, k):
     distances = []
@@ -27,10 +29,10 @@ def compute_novelty_vs_archive(archive, novelty_vector, k):
 
     # Pick k nearest neighbors
     distances = np.array(distances)
-    # 选距离最小的k的个
     top_k_indicies = (distances).argsort()[:k]
     top_k = distances[top_k_indicies]
     return top_k.mean()
+
 
 def get_mean_bc(env, policy, tslimit, num_rollouts=1):
     novelty_vector = []
@@ -38,6 +40,7 @@ def get_mean_bc(env, policy, tslimit, num_rollouts=1):
         rew, t, nv = policy.rollout(env, timestep_limit=tslimit)
         novelty_vector.append(nv)
     return np.mean(novelty_vector, axis=0)
+
 
 def setup_env(exp):
     import gym
@@ -49,12 +52,14 @@ def setup_env(exp):
         env = wrap_deepmind(env)
     return config, env
 
+
 def setup_policy(env, exp, single_threaded):
     from . import policies, tf_util
     sess = make_session(single_threaded=single_threaded)
     policy = getattr(policies, exp['policy']['type'])(env.observation_space, env.action_space, **exp['policy']['args'])
     tf_util.initialize()
     return sess, policy
+
 
 def run_master(master_redis_cfg, log_dir, exp):
     logger.info('run_master: {}'.format(locals()))
@@ -81,7 +86,8 @@ def run_master(master_redis_cfg, log_dir, exp):
     elif config.episode_cutoff_mode.startswith('adaptive:'):
         _, args = config.episode_cutoff_mode.split(':')
         arg0, arg1, arg2, arg3 = args.split(',')
-        tslimit, incr_tslimit_threshold, tslimit_incr_ratio, tslimit_max = int(arg0), float(arg1), float(arg2), float(arg3)
+        tslimit, incr_tslimit_threshold, tslimit_incr_ratio, tslimit_max = int(arg0), float(arg1), float(arg2), float(
+            arg3)
         adaptive_tslimit = True
         logger.info(
             'Starting timestep limit set to {}. When {}% of rollouts hit the limit, it will be increased by {}. The maximum timestep limit is {}'.format(
@@ -111,6 +117,7 @@ def run_master(master_redis_cfg, log_dir, exp):
             if policy.needs_ref_batch:
                 policy.set_ref_batch(ref_batch)
 
+            # 第一次初始化的add_to_novelty_archive
             mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
             master.add_to_novelty_archive(mean_bc)
 
@@ -124,7 +131,7 @@ def run_master(master_redis_cfg, log_dir, exp):
 
     while True:
         step_tstart = time.time()
-
+        # current_parent <=> 第几个index
         theta = theta_dict[curr_parent]
         policy.set_trainable_flat(theta)
         optimizer = optimizer_dict[curr_parent]
@@ -141,13 +148,32 @@ def run_master(master_redis_cfg, log_dir, exp):
             ref_batch=ref_batch if policy.needs_ref_batch else None,
             timestep_limit=tslimit
         ))
+        logger.debug('[master] declare new task {}'.format(str(curr_task_id)))
+        logger.debug('[master] params:')
+        logger.debug(theta)
+        logger.debug('[master] ob_mean:')
+        logger.debug(ob_stat.mean if policy.needs_ob_stat else None)
+        logger.debug('[master] ob_std:')
+        logger.debug(ob_stat.std if policy.needs_ob_stat else None)
+        # logger.debug('[master] ref_batch:')
+        # logger.debug(ref_batch if policy.needs_ref_batch else None)
+        logger.debug('[master] timestep_limit:')
+        logger.debug(tslimit)
+        logger.debug('[master] Finish declare new task {}'.format(str(curr_task_id)))
         tlogger.log('********** Iteration {} **********'.format(curr_task_id))
 
         # Pop off results for the current task
         curr_task_results, eval_rets, eval_lens, worker_ids = [], [], [], []
         num_results_skipped, num_episodes_popped, num_timesteps_popped, ob_count_this_batch = 0, 0, 0, 0
         while num_episodes_popped < config.episodes_per_batch or num_timesteps_popped < config.timesteps_per_batch:
+            # todo 一直在这个循环 !!!!!!
             # Wait for a result
+            logger.debug('[master] Wait for a result')
+            logger.debug(num_episodes_popped)
+            logger.debug(config.episodes_per_batch)
+            logger.debug(num_timesteps_popped)
+            logger.debug(config.timesteps_per_batch)
+            logger.debug('[master] Wait for a result finish\n')
             task_id, result = master.pop_result()
             assert isinstance(task_id, int) and isinstance(result, Result)
             assert (result.eval_return is None) == (result.eval_length is None)
@@ -171,6 +197,12 @@ def run_master(master_redis_cfg, log_dir, exp):
                 episodes_so_far += result_num_eps
                 timesteps_so_far += result_num_timesteps
                 # Store results only for current tasks
+                logger.debug('[master] Store results tasks::task_id start')
+                logger.debug(task_id)
+                logger.debug(curr_task_id)
+                logger.debug(task_id == curr_task_id)
+                logger.debug('[master] Store results tasks::task_id end')
+                # todo 没有进入到这个条件判断中去 !!!!
                 if task_id == curr_task_id:
                     curr_task_results.append(result)
                     num_episodes_popped += result_num_eps
@@ -181,13 +213,18 @@ def run_master(master_redis_cfg, log_dir, exp):
                         ob_count_this_batch += result.ob_count
                 else:
                     num_results_skipped += 1
-
+                    # todo current
+                    logger.debug('[master] num_results_skipped: {}'.format(num_results_skipped))
+        logger.debug("[master] Compute skip fraction")
+        logger.debug("[master] num_episodes_popped: {}".format(num_episodes_popped))
+        logger.debug("[master] num_timesteps_popped: {}".format(num_timesteps_popped))
         # Compute skip fraction
         frac_results_skipped = num_results_skipped / (num_results_skipped + len(curr_task_results))
         if num_results_skipped > 0:
-            logger.warning('Skipped {} out of date results ({:.2f}%)'.format(
+            logger.warning('[master] Skipped {} out of date results ({:.2f}%)'.format(
                 num_results_skipped, 100. * frac_results_skipped))
 
+        logger.debug("[master] Assemble results")
         # Assemble results
         noise_inds_n = np.concatenate([r.noise_inds_n for r in curr_task_results])
         returns_n2 = np.concatenate([r.returns_n2 for r in curr_task_results])
@@ -195,6 +232,7 @@ def run_master(master_redis_cfg, log_dir, exp):
         signreturns_n2 = np.concatenate([r.signreturns_n2 for r in curr_task_results])
 
         assert noise_inds_n.shape[0] == returns_n2.shape[0] == lengths_n2.shape[0]
+        logger.debug("[master] Process returns")
         # Process returns
         if config.return_proc_mode == 'centered_rank':
             proc_returns_n2 = compute_centered_ranks(returns_n2)
@@ -205,10 +243,10 @@ def run_master(master_redis_cfg, log_dir, exp):
         else:
             raise NotImplementedError(config.return_proc_mode)
 
-        if algo_type  == "nsr":
+        if algo_type == "nsr":
             rew_ranks = compute_centered_ranks(returns_n2)
             proc_returns_n2 = (rew_ranks + proc_returns_n2) / 2.0
-
+        logger.debug("[master] Compute and take step")
         # Compute and take step
         g, count = batched_weighted_sum(
             proc_returns_n2[:, 0] - proc_returns_n2[:, 1],
@@ -227,7 +265,8 @@ def run_master(master_redis_cfg, log_dir, exp):
 
         mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
         master.add_to_novelty_archive(mean_bc)
-
+        # logger.debug('')
+        logger.debug("[master] Update number of steps to take")
         # Update number of steps to take
         if adaptive_tslimit and (lengths_n2 == tslimit).mean() >= incr_tslimit_threshold:
             old_tslimit = tslimit
@@ -265,8 +304,8 @@ def run_master(master_redis_cfg, log_dir, exp):
         tlogger.record_tabular("TimeElapsedThisIter", step_tend - step_tstart)
         tlogger.record_tabular("TimeElapsed", step_tend - tstart)
         tlogger.dump_tabular()
-
-        #updating population parameters
+        logger.debug('[master] updating population parameters')
+        # updating population parameters
         theta_dict[curr_parent] = policy.get_trainable_flat()
         optimizer_dict[curr_parent] = optimizer
         if policy.needs_ob_stat:
@@ -277,10 +316,12 @@ def run_master(master_redis_cfg, log_dir, exp):
             archive = master.get_archive()
             for p in range(pop_size):
                 policy.set_trainable_flat(theta_dict[p])
+                # 计算novelty是为了更新population的equation 1，为了选出下一个paramter vector
                 mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
                 nov_p = compute_novelty_vs_archive(archive, mean_bc, exp['novelty_search']['k'])
                 novelty_probs.append(nov_p)
             novelty_probs = np.array(novelty_probs) / float(np.sum(novelty_probs))
+            # 这就是下一代parameter: curr_parent的index
             curr_parent = np.random.choice(range(pop_size), 1, p=novelty_probs)[0]
         elif exp['novelty_search']['selection_method'] == "round_robin":
             curr_parent = (curr_parent + 1) % pop_size
@@ -298,6 +339,7 @@ def run_master(master_redis_cfg, log_dir, exp):
             policy.save(filename)
             tlogger.log('Saved snapshot {}'.format(filename))
 
+
 def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2):
     logger.info('run_worker: {}'.format(locals()))
     assert isinstance(noise, SharedNoiseTable)
@@ -310,7 +352,9 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
     previous_task_id = -1
 
     assert policy.needs_ob_stat == (config.calc_obstat_prob != 0)
-
+    # todo current 一致在这个循环中，原因是master没有新的task 8
+    # (7, Task(params=array([-0.05775467, -0.02949787, -0.02636356, ...,  0.02638015,
+    #     -0.00041175,  0.01894719], dtype=float32), ob_mean=None, ob_std=None, ref_batch=[array([[[ 0.        ,  0.        ,  0.        ,  0.        ],
     while True:
         task_id, task_data = worker.get_current_task()
         task_tstart = time.time()
@@ -350,6 +394,15 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
             task_ob_stat = RunningStat(env.observation_space.shape, eps=0.)  # eps=0 because we're incrementing only
 
             while not noise_inds or time.time() - task_tstart < min_task_runtime:
+                # todo 现在加入
+                logger.debug('[worker][test] noise_inds start')
+                logger.debug(noise_inds)
+                logger.debug(time.time())
+                logger.debug(task_tstart)
+                logger.debug(time.time() - task_tstart )
+                logger.debug(min_task_runtime)
+                logger.debug('[worker][test] noise_inds end')
+
                 noise_idx = noise.sample_index(rs, policy.num_params)
                 v = config.noise_stdev * noise.get(noise_idx, policy.num_params)
 
@@ -360,10 +413,16 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
                 policy.set_trainable_flat(task_data.params - v)
                 rews_neg, len_neg, nov_vec_neg = rollout_and_update_ob_stat(
                     policy, env, task_data.timestep_limit, rs, task_ob_stat, config.calc_obstat_prob)
-
+                # 计算了30/2=15次
                 nov_pos = compute_novelty_vs_archive(archive, nov_vec_pos, exp['novelty_search']['k'])
                 nov_neg = compute_novelty_vs_archive(archive, nov_vec_neg, exp['novelty_search']['k'])
-                
+                # 一致在这里循环
+                logger.debug("[worker] nov start")
+                logger.debug("[worker] nov_pos")
+                logger.debug(nov_pos)
+                logger.debug("[worker] nov_neg")
+                logger.debug(nov_neg)
+                logger.debug("[worker] nov end")
                 signreturns.append([nov_pos, nov_neg])
                 noise_inds.append(noise_idx)
                 returns.append([rews_pos.sum(), rews_neg.sum()])
