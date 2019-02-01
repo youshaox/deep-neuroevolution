@@ -313,7 +313,7 @@ class ESAtariPolicy(Policy):
             is_ref_ph = tf.placeholder(tf.bool, shape=[])
 
             a = self._make_net(o, is_ref_ph)
-            self._act = U.function([o, is_ref_ph] , a)
+            self._act = U.function([o, is_ref_ph], a)
         return scope
 
     def _make_net(self, o, is_ref):
@@ -330,6 +330,7 @@ class ESAtariPolicy(Policy):
         return tf.argmax(a,1)
 
     def set_ref_batch(self, ref_batch):
+        # 不断自增的
         self.ref_list = []
         self.ref_list.append(ref_batch)
         self.ref_list.append(True)
@@ -396,6 +397,7 @@ class ESAtariPolicy(Policy):
                 random_stream.seed(policy_seed)
 
         ob = env.reset()
+        # 恢复之前的工作
         self.act(self.ref_list, random_stream=random_stream) #passing ref batch through network
 
         for _ in range(timestep_limit):

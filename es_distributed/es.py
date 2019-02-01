@@ -64,6 +64,7 @@ class SharedNoiseTable(object):
         return self.noise[i:i + dim]
 
     def sample_index(self, stream, dim):
+        # 抛开noise table中的后dim位，来做random sampling一个index
         return stream.randint(0, len(self.noise) - dim + 1)
 
 
@@ -81,6 +82,7 @@ def compute_ranks(x):
 def compute_centered_ranks(x):
     y = compute_ranks(x.ravel()).reshape(x.shape).astype(np.float32)
     y /= (x.size - 1)
+    # 不知道为什么要减去0.5
     y -= .5
     return y
 
@@ -107,6 +109,7 @@ def get_ref_batch(env, batch_size=32):
     ob = env.reset()
     while len(ref_batch) < batch_size:
         ob, rew, done, info = env.step(env.action_space.sample())
+        # (210, 160, 3)
         ref_batch.append(ob)
         if done:
             ob = env.reset()
@@ -360,6 +363,7 @@ def rollout_and_update_ob_stat(policy, env, timestep_limit, rs, task_ob_stat, ca
             env, timestep_limit=timestep_limit, save_obs=True, random_stream=rs)
         task_ob_stat.increment(obs.sum(axis=0), np.square(obs).sum(axis=0), len(obs))
     else:
+        # 我们是这个
         rollout_rews, rollout_len, rollout_nov = policy.rollout(env, timestep_limit=timestep_limit, random_stream=rs)
     return rollout_rews, rollout_len, rollout_nov
 

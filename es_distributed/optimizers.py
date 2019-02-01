@@ -6,7 +6,7 @@ class Optimizer(object):
         self.theta = theta
         self.dim = len(self.theta)
         self.t = 0
-
+    # 更新参数，计算梯度
     def update(self, globalg):
         self.t += 1
         step = self._compute_step(globalg)

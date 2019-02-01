@@ -72,17 +72,12 @@ class MasterClient:
     def declare_task(self, task_data):
         task_id = self.task_counter
         self.task_counter += 1
-        # logger.debug("I have declared task ")
-        # todo !!!!!!! here !!!!!!! 问题就在这里 它的确declare_task 8，但是不知道又没有成功，因为下面应该没有收到task 8不知道有没有成功，因为从redis中取任务，看起来没有task8
+
         serialized_task_data = serialize(task_data)
-        # 查看有没有成功
-        logger.debug("[Master] 检查push任务有没有成功")
-        publish_result = (self.master_redis.pipeline()
+        (self.master_redis.pipeline()
          .mset({TASK_ID_KEY: task_id, TASK_DATA_KEY: serialized_task_data})
          .publish(TASK_CHANNEL, serialize((task_id, serialized_task_data)))
-         .execute()) # TODO: can we avoid transferring task data twice and serializing so much?
-        logger.debug(type(publish_result))
-        logger.debug(publish_result)
+         .execute())  # TODO: can we avoid transferring task data twice and serializing so much?
         logger.debug('[master] Declared task {}'.format(task_id))
         return task_id
 
@@ -92,6 +87,7 @@ class MasterClient:
         return task_id, result
 
     def flush_results(self):
+        # 仅仅保留RESULTS_KEY中 -1, -1位置的
         return max(self.master_redis.pipeline().llen(RESULTS_KEY).ltrim(RESULTS_KEY, -1, -1).execute()[0] -1, 0)
 
     def add_to_novelty_archive(self, novelty_vector):
@@ -117,39 +113,14 @@ class RelayClient:
         self.results_published = 0
 
     def run(self):
-        # todo  current 这块没有执行 !!!!!!!!!!!!!!!!!!!!!!
         # Initialization: read exp and latest task from master
-        # 设定exp
         self.local_redis.set(EXP_KEY, retry_get(self.master_redis, EXP_KEY))
         self._declare_task_local(*retry_get(self.master_redis, (TASK_ID_KEY, TASK_DATA_KEY)))
-        logger.debug("[relay] _declare_task_local 1nd pos")
-
-        # 这上面是最开始做一次的
+        logger.debug("[relay] [test] _declare_task_local i think it should appear one time")
         # Start subscribing to tasks
-
         p = self.master_redis.pubsub(ignore_subscribe_messages=True)
-        ## todo !!!!!!!!他妈的就是这里，here 我认为问题处在了这里，没有得到新的任务!!!!!!!，我这边是看到task 8的
-        test_p = self.master_redis.pubsub(ignore_subscribe_messages=True)
-        # todo
-        # test_p.subscribe(**{TASK_CHANNEL: lambda msg: print_task_id_from_channel(*deserialize(msg['data']))})
-        # 搞懂这句话的意思
-        # 学习下如何使用subscribe
-        # 考虑加个循环检查下有没有任务
-
-        p = self.master_redis.pubsub(ignore_subscribe_messages=True)
-        while True:
-            message = p.get_message()
-            logger.debug('---------- test  没有监听到新的task ----------')
-            if message:
-                logger.debug(
-                    '---------- test  监听到新的task id: {} ----------'.format(str(deserialize(message['data'][0]))))
-                self._declare_task_local(*deserialize(message['data']))
-            time.sleep(0.001)  # be nice to the system :)
-
-
         p.subscribe(**{TASK_CHANNEL: lambda msg: self._declare_task_local(*deserialize(msg['data']))})
-
-        logger.debug("[relay] _declare_task_local 2nd pos")
+        logger.debug("[relay] [test] _declare_task_local i think it should appear servallll time")
         p.run_in_thread(sleep_time=0.001)
 
         # Loop on RESULTS_KEY and push to master
@@ -173,15 +144,12 @@ class RelayClient:
         number_flushed_master = max(self.master_redis.pipeline().llen(RESULTS_KEY).ltrim(RESULTS_KEY, -1, -1).execute()[0] -1, 0)
         logger.warning('[relay] Flushed {} results from worker redis and {} from master'
             .format(number_flushed, number_flushed_master))
-    # todo current 没有进行到这一步
+
     def _declare_task_local(self, task_id, task_data):
         logger.info('[relay] Received task {}'.format(task_id))
         self.results_published = 0
         self.local_redis.mset({TASK_ID_KEY: task_id, TASK_DATA_KEY: task_data})
         self.flush_results()
-    # todo
-    def _printtask_id(self, task_id, task_data):
-        logger.info('********************************[relay] _printtask_id: {}'.format(task_id))
 
 
 class WorkerClient:
@@ -204,23 +172,16 @@ class WorkerClient:
         return [deserialize(novelty_vector) for novelty_vector in archive]
 
     def get_current_task(self):
-        # 该步运行完成，但是task_9没有
         with self.local_redis.pipeline() as pipe:
-            # 直到获得cached_task_id 和 cached_task_data
             while True:
                 try:
                     pipe.watch(TASK_ID_KEY)
-                    # todo current !!!!!!!!!!
-                    # 说明卡在这里，一直获得的是旧的任务
                     task_id = int(retry_get(pipe, TASK_ID_KEY))
-                    # 如果任务id还和cached)task_id一样的化，继续看有没有新的任务
                     if task_id == self.cached_task_id:
-                        # 一直在这里呢！！！！！！！
                         logger.debug('[worker] Returning cached task {}'.format(task_id))
                         break
                     pipe.multi()
                     pipe.get(TASK_DATA_KEY)
-                    # todo 这步其实只有一开始进行了，
                     logger.info('[worker] Getting new task {}. Cached task was {}'.format(task_id, self.cached_task_id))
                     self.cached_task_id, self.cached_task_data = task_id, deserialize(pipe.execute()[0])
                     break
