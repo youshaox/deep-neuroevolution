@@ -374,6 +374,7 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
     worker = WorkerClient(relay_redis_cfg, master_redis_cfg)
     exp = worker.get_experiment()
     config, env, sess, policy = setup(exp, single_threaded=True)
+    # 这个使得后面用rs的都不会变。
     rs = np.random.RandomState()
     worker_id = rs.randint(2 ** 31)
 
