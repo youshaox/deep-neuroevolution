@@ -3,10 +3,9 @@ import time
 from collections import namedtuple
 import tensorflow as tf
 from copy import deepcopy
-import pickle
-import json
+
 import numpy as np
-import sys
+
 from .dist import MasterClient, WorkerClient
 from .es import *
 
@@ -107,7 +106,7 @@ def run_master(master_redis_cfg, log_dir, exp):
             if 'init_from' in exp['policy']:
                 logger.info('Initializing weights from {}'.format(exp['policy']['init_from']))
                 policy.initialize_from(exp['policy']['init_from'], ob_stat)
-            # todo 第一次初始化
+
             theta = policy.get_trainable_flat()
             optimizer = {'sgd': SGD, 'adam': Adam}[exp['optimizer']['type']](theta, **exp['optimizer']['args'])
 
@@ -128,8 +127,6 @@ def run_master(master_redis_cfg, log_dir, exp):
     timesteps_so_far = 0
     tstart = time.time()
     master.declare_experiment(exp)
-    debug_dict = {}
-    debug_dict_list = list()
 
     while True:
         step_tstart = time.time()
@@ -142,6 +139,7 @@ def run_master(master_redis_cfg, log_dir, exp):
             ob_stat = deepcopy(obstat_dict[curr_parent])
 
         assert theta.dtype == np.float32
+
         curr_task_id = master.declare_task(Task(
             params=theta,
             ob_mean=ob_stat.mean if policy.needs_ob_stat else None,
@@ -169,15 +167,6 @@ def run_master(master_redis_cfg, log_dir, exp):
                     ref_batch=ref_batch if policy.needs_ref_batch else None,
                     timestep_limit=tslimit
                 ))
-        if curr_task_id > 200:
-            logger.info("Task finish! I have runned for {} generations!".format(str(curr_task_id)))
-            sys.exit(0)
-        debug_dict['task_id'] = curr_task_id
-        debug_dict['curr_parent_1'] = curr_parent
-        debug_dict['theta_1'] = theta
-        debug_dict['ref_batch_1'] = ref_batch
-        debug_dict['tslimit_1'] = tslimit
-
         tlogger.log('********** Iteration {} **********'.format(curr_task_id))
 
         # Pop off results for the current task
@@ -218,15 +207,6 @@ def run_master(master_redis_cfg, log_dir, exp):
                         ob_count_this_batch += result.ob_count
                 else:
                     num_results_skipped += 1
-        debug_dict['num_episodes_popped'] = num_episodes_popped
-        debug_dict['num_timesteps_popped'] = num_timesteps_popped
-        debug_dict['curr_task_results'] = curr_task_results
-        debug_dict['result_num_eps'] = result_num_eps
-        debug_dict['result_num_timesteps'] = result_num_timesteps
-        debug_dict['eval_rets'] = eval_rets
-        debug_dict['eval_lens'] = eval_lens
-        debug_dict['episodes_so_far'] = episodes_so_far
-        debug_dict['timesteps_so_far'] = timesteps_so_far
 
         # Compute skip fraction
         frac_results_skipped = num_results_skipped / (num_results_skipped + len(curr_task_results))
@@ -239,10 +219,6 @@ def run_master(master_redis_cfg, log_dir, exp):
         returns_n2 = np.concatenate([r.returns_n2 for r in curr_task_results])
         lengths_n2 = np.concatenate([r.lengths_n2 for r in curr_task_results])
         signreturns_n2 = np.concatenate([r.signreturns_n2 for r in curr_task_results])
-        debug_dict['noise_inds_n'] = noise_inds_n
-        debug_dict['returns_n2'] = returns_n2
-        debug_dict['lengths_n2'] = lengths_n2
-        debug_dict['signreturns_n2'] = signreturns_n2
 
         assert noise_inds_n.shape[0] == returns_n2.shape[0] == lengths_n2.shape[0]
         # Process returns
@@ -254,13 +230,10 @@ def run_master(master_redis_cfg, log_dir, exp):
             proc_returns_n2 = compute_centered_ranks(signreturns_n2)
         else:
             raise NotImplementedError(config.return_proc_mode)
-        debug_dict['proc_returns_n2_1'] = proc_returns_n2
 
         if algo_type == "nsr":
             rew_ranks = compute_centered_ranks(returns_n2)
             proc_returns_n2 = (rew_ranks + proc_returns_n2) / 2.0
-        debug_dict['proc_returns_n2_2'] = proc_returns_n2
-        debug_dict['rew_ranks'] = rew_ranks
 
         # Compute and take step
         g, count = batched_weighted_sum(
@@ -268,13 +241,10 @@ def run_master(master_redis_cfg, log_dir, exp):
             (noise.get(idx, policy.num_params) for idx in noise_inds_n),
             batch_size=500
         )
-        debug_dict['g1'] = g
         g /= returns_n2.size
-        debug_dict['g2'] = g
         assert g.shape == (policy.num_params,) and g.dtype == np.float32 and count == len(noise_inds_n)
         update_ratio, theta = optimizer.update(-g + config.l2coeff * theta)
-        debug_dict['update_ratio'] = update_ratio
-        debug_dict['theta'] = theta
+
         policy.set_trainable_flat(theta)
 
         # Update ob stat (we're never running the policy in the master, but we might be snapshotting the policy)
@@ -283,7 +253,7 @@ def run_master(master_redis_cfg, log_dir, exp):
 
         mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
         master.add_to_novelty_archive(mean_bc)
-        debug_dict['mean_bc'] = mean_bc
+
         # Update number of steps to take
         if adaptive_tslimit and (lengths_n2 == tslimit).mean() >= incr_tslimit_threshold:
             old_tslimit = tslimit
@@ -325,7 +295,6 @@ def run_master(master_redis_cfg, log_dir, exp):
         # updating population parameters
         theta_dict[curr_parent] = policy.get_trainable_flat()
         optimizer_dict[curr_parent] = optimizer
-        debug_dict['theta_dict[curr_parent]'] = theta_dict[curr_parent]
         if policy.needs_ob_stat:
             obstat_dict[curr_parent] = ob_stat
 
@@ -337,15 +306,13 @@ def run_master(master_redis_cfg, log_dir, exp):
                 mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
                 nov_p = compute_novelty_vs_archive(archive, mean_bc, exp['novelty_search']['k'])
                 novelty_probs.append(nov_p)
-            debug_dict['novelty_probs_1'] = novelty_probs
             novelty_probs = np.array(novelty_probs) / float(np.sum(novelty_probs))
-            debug_dict['novelty_probs_2'] = novelty_probs
             curr_parent = np.random.choice(range(pop_size), 1, p=novelty_probs)[0]
         elif exp['novelty_search']['selection_method'] == "round_robin":
             curr_parent = (curr_parent + 1) % pop_size
         else:
             raise NotImplementedError(exp['novelty_search']['selection_method'])
-        debug_dict['curr_parent_2'] = curr_parent
+
         if config.snapshot_freq != 0 and curr_task_id % config.snapshot_freq == 0:
             import os.path as osp
             filename = 'snapshot_iter{:05d}_rew{}.h5'.format(
@@ -355,17 +322,10 @@ def run_master(master_redis_cfg, log_dir, exp):
             assert not osp.exists(filename)
             policy.save(filename)
             tlogger.log('Saved snapshot {}'.format(filename))
-        debug_dict_list.append(debug_dict)
-        if config.snapshot_freq != 0 and curr_task_id % 10 == 0:
-            with open('nses_master_debugger' + '.pickle','wb') as fp:
-                pickle.dump(debug_dict_list, fp)
-
 
 
 def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2):
     logger.info('run_worker: {}'.format(locals()))
-    debug_worker_dict = {}
-    debug_worker_dict_list = []
     assert isinstance(noise, SharedNoiseTable)
     worker = WorkerClient(relay_redis_cfg, master_redis_cfg)
     exp = worker.get_experiment()
@@ -410,9 +370,6 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
                 ob_sumsq=None,
                 ob_count=None
             ))
-            debug_worker_dict['eval_return'] = eval_return
-            debug_worker_dict['eval_length'] = eval_length
-            debug_worker_dict['eval_rews'] = eval_rews
         else:
             # Rollouts with noise
             noise_inds, returns, signreturns, lengths = [], [], [], []
@@ -450,19 +407,3 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
                 ob_sumsq=None if task_ob_stat.count == 0 else task_ob_stat.sumsq,
                 ob_count=task_ob_stat.count
             ))
-            debug_worker_dict['archive'] = archive
-            debug_worker_dict['worker_id'] = worker_id
-            debug_worker_dict['noise_inds_n'] = np.array(noise_inds)
-            debug_worker_dict['returns_n2'] = np.array(returns, dtype=np.float32)
-            debug_worker_dict['signreturns_n2'] = np.array(signreturns, dtype=np.float32)
-            debug_worker_dict['lengths_n2'] = np.array(lengths, dtype=np.int32)
-            debug_worker_dict['ob_sum'] = None if task_ob_stat.count == 0 else task_ob_stat.sum
-            debug_worker_dict['ob_sumsq'] = None if task_ob_stat.count == 0 else task_ob_stat.sumsq
-
-        debug_worker_dict_list.append(debug_worker_dict)
-        if config.snapshot_freq != 0 and task_id % 10 == 0:
-            with open('nses_worker_debugger' + "_" + str(worker_id) + '.pickle', 'wb') as fp:
-                pickle.dump(debug_worker_dict_list, fp)
-        if task_id > 200:
-            logger.info("Task finish! I have runned for {} generations!".format(str(task_id)))
-            sys.exit(0)
