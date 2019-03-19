@@ -98,6 +98,9 @@ class MasterClient:
         archive = self.master_redis.lrange(ARCHIVE_KEY, 0, -1)
         return [deserialize(novelty_vector) for novelty_vector in archive]
 
+    def set_worker_id(self):
+        self.master_redis.sadd('worker_id', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+
 
 class RelayClient:
     """
@@ -192,3 +195,9 @@ class WorkerClient:
     def push_result(self, task_id, result):
         self.local_redis.rpush(RESULTS_KEY, serialize((task_id, result)))
         logger.debug('[worker] Pushed result for task {}'.format(task_id))
+
+    def get_worker_id(self):
+        try:
+            return int(self.master_redis.spop('worker_id'))
+        except TypeError as e:
+            raise TypeError('There is no worker_id. You have a problem in setting the num of workers!')
