@@ -1,19 +1,7 @@
 """
-固定初始状态，不固定随机变量
-
-todo
-1. 保证不同实验是可以复现的，即初始的theta是fixed，初始的archive是一致的。
-2. 同一个实验下，同一个worker，不同迭代/epoch下的noise是不一样的。
-3. 同一个实验下，同一个代下，不同的worker用的是不同的seed。
-
-noise:
-
-实验记录:
-1. 记录每次实验的平均reward 完成
-2. 记录每次实验的平均novelty 完成
-3. 记录mean_bc的archive
-
+生成初始化的pickle
 """
+
 
 import logging
 import time
@@ -85,10 +73,8 @@ def run_master(master_redis_cfg, log_dir, exp):
     config, env = setup_env(exp)
     algo_type = exp['algo_type']
     master = MasterClient(master_redis_cfg)
-    # 添加元素
-    master.set_worker_id()
     noise = SharedNoiseTable()
-    rs = np.random.RandomState()
+    rs = np.random.RandomState(123)
     ref_batch = get_ref_batch(env, batch_size=128)
 
     pop_size = int(exp['novelty_search']['population_size'])
@@ -117,21 +103,16 @@ def run_master(master_redis_cfg, log_dir, exp):
         adaptive_tslimit = False
     else:
         raise NotImplementedError(config.episode_cutoff_mode)
-    mean_bc_list = []
-    filepath = os.path.join('/home/shawn/workspace/research/deep-neuroevolution/fixed_dict.pickle_1')
-    fixed_dict_fixed = pickle.load(open(filepath,'rb'))
-    theta_dict_fixed = deepcopy(fixed_dict_fixed['theta_dict'])
-    # fixed_dict['ref_batch'] = ref_batch
-    ref_batch = deepcopy(fixed_dict_fixed['ref_batch'])
+    mean_bc_list=[]
     for p in range(pop_size):
         with tf.Graph().as_default():
             sess, policy = setup_policy(env, exp, single_threaded=False)
+
             if 'init_from' in exp['policy']:
                 logger.info('Initializing weights from {}'.format(exp['policy']['init_from']))
                 policy.initialize_from(exp['policy']['init_from'], ob_stat)
-            policy.set_trainable_flat(theta_dict_fixed[p])
+
             theta = policy.get_trainable_flat()
-            theta_dict[p] = theta
             optimizer = {'sgd': SGD, 'adam': Adam}[exp['optimizer']['type']](theta, **exp['optimizer']['args'])
 
             if policy.needs_ob_stat:
@@ -143,31 +124,39 @@ def run_master(master_redis_cfg, log_dir, exp):
 
             mean_bc = get_mean_bc(env, policy, tslimit_max, num_rollouts)
             master.add_to_novelty_archive(mean_bc)
-            # todo
             mean_bc_list.append(mean_bc)
+
+            theta_dict[p] = theta
             optimizer_dict[p] = optimizer
-    # todo
     debug_dict = {}
     fixed_dict = {}
     debug_dict_list = list()
 
-    # fixed_dict['optimizer_dict'] = optimizer_dict
-    optimizer_dict = deepcopy(fixed_dict_fixed['optimizer_dict'])
-    # fixed_dict['mean_bc_list'] = mean_bc_list
-    mean_bc_list = deepcopy(fixed_dict_fixed['mean_bc_list'])
-    archive = deepcopy(fixed_dict_fixed['archive'])
+    fixed_dict['ref_batch'] = ref_batch
+    fixed_dict['optimizer_dict'] = optimizer_dict
+    fixed_dict['theta_dict'] = theta_dict
+    # optimizer_dict = deepcopy(fixed_dict_fixed['optimizer_dict'])
+    fixed_dict['mean_bc_list'] = mean_bc_list
+    # mean_bc_list = deepcopy(fixed_dict_fixed['mean_bc_list'])
+    archive = master.get_archive()
+    fixed_dict['archive'] = archive
+    # archive = deepcopy(fixed_dict_fixed['archive'])
 
     episodes_so_far = 0
     timesteps_so_far = 0
     tstart = time.time()
     master.declare_experiment(exp)
+
     while True:
         step_tstart = time.time()
+
         theta = theta_dict[curr_parent]
         policy.set_trainable_flat(theta)
         optimizer = optimizer_dict[curr_parent]
+
         if policy.needs_ob_stat:
             ob_stat = deepcopy(obstat_dict[curr_parent])
+
         assert theta.dtype == np.float32
 
         curr_task_id = master.declare_task(Task(
@@ -197,10 +186,9 @@ def run_master(master_redis_cfg, log_dir, exp):
                     ref_batch=ref_batch if policy.needs_ref_batch else None,
                     timestep_limit=tslimit
                 ))
-            # todo 保存archive
-        # if curr_task_id == 0:
-        #     with open('fixed_dict' + '.pickle', 'wb') as fp:
-        #         pickle.dump(fixed_dict, fp)
+        if curr_task_id == 0:
+            with open('fixed_dict' + '.pickle', 'wb') as fp:
+                pickle.dump(fixed_dict, fp)
         tlogger.log('********** Iteration {} **********'.format(curr_task_id))
 
         # Pop off results for the current task
@@ -250,10 +238,8 @@ def run_master(master_redis_cfg, log_dir, exp):
 
         # Assemble results
         noise_inds_n = np.concatenate([r.noise_inds_n for r in curr_task_results])
-        # reward
         returns_n2 = np.concatenate([r.returns_n2 for r in curr_task_results])
         lengths_n2 = np.concatenate([r.lengths_n2 for r in curr_task_results])
-        # novelty
         signreturns_n2 = np.concatenate([r.signreturns_n2 for r in curr_task_results])
         # novelty
         signreturns_n2_mean = np.mean(signreturns_n2, axis=0)
@@ -271,6 +257,10 @@ def run_master(master_redis_cfg, log_dir, exp):
             proc_returns_n2 = compute_centered_ranks(signreturns_n2)
         else:
             raise NotImplementedError(config.return_proc_mode)
+
+        if algo_type == "nsr":
+            rew_ranks = compute_centered_ranks(returns_n2)
+            proc_returns_n2 = (rew_ranks + proc_returns_n2) / 2.0
 
         # Compute and take step
         g, count = batched_weighted_sum(
@@ -360,9 +350,9 @@ def run_master(master_redis_cfg, log_dir, exp):
             policy.save(filename)
             tlogger.log('Saved snapshot {}'.format(filename))
         debug_dict_list.append(debug_dict)
-        if config.snapshot_freq != 0:
-            with open('nses_master_debugger' + '.pickle', 'wb') as fp:
-                pickle.dump(debug_dict_list, fp)
+        # if config.snapshot_freq != 0:
+        #     with open('nses_master_debugger' + '.pickle', 'wb') as fp:
+        #         pickle.dump(debug_dict_list, fp)
 
 def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2):
     logger.info('run_worker: {}'.format(locals()))
@@ -370,10 +360,9 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
     worker = WorkerClient(relay_redis_cfg, master_redis_cfg)
     exp = worker.get_experiment()
     config, env = setup_env(exp)
-    worker_id = worker.get_worker_id()
     sess, policy = setup_policy(env, exp, single_threaded=False)
-    rs = np.random.RandomState(worker_id)
-    logging.info('worker id:' + str(worker_id))
+    rs = np.random.RandomState()
+    worker_id = rs.randint(2 ** 31)
     previous_task_id = -1
 
     assert policy.needs_ob_stat == (config.calc_obstat_prob != 0)
@@ -399,7 +388,6 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
             eval_rews, eval_length, _ = policy.rollout(env, timestep_limit=task_data.timestep_limit)
             eval_return = eval_rews.sum()
             logger.info('Eval result: task={} return={:.3f} length={}'.format(task_id, eval_return, eval_length))
-            logging.info('[worker] with worker id: {} pushes the result'.format(str(worker_id)))
             worker.push_result(task_id, Result(
                 worker_id=worker_id,
                 noise_inds_n=None,
@@ -419,7 +407,6 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
 
             while not noise_inds or time.time() - task_tstart < min_task_runtime:
                 noise_idx = noise.sample_index(rs, policy.num_params)
-                logging.info('[worker] with worker id gets the noise index: {}.'.format(str(noise_idx)))
                 v = config.noise_stdev * noise.get(noise_idx, policy.num_params)
 
                 policy.set_trainable_flat(task_data.params + v)
@@ -437,7 +424,7 @@ def run_worker(master_redis_cfg, relay_redis_cfg, noise, *, min_task_runtime=.2)
                 noise_inds.append(noise_idx)
                 returns.append([rews_pos.sum(), rews_neg.sum()])
                 lengths.append([len_pos, len_neg])
-            logging.info('[worker] with worker id: {} pushes the result'.format(str(worker_id)))
+
             worker.push_result(task_id, Result(
                 worker_id=worker_id,
                 noise_inds_n=np.array(noise_inds),
